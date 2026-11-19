@@ -2,6 +2,10 @@
 
 A Python-based tool to track market traction on the Guild Wars 2 Black Lion Market by the hour.
 
+This is more of a niche tool to use while watching the market in real time. 
+
+For analysis over long periods of time and easier setup I recommend using GW2 Efficiency: https://gw2efficiency.com/
+
 ## Setup
 1. Install requirements: `pip install -r requirements.txt`
 2. Add your API key to `main.py` (or configure a `.env` file).

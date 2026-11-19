@@ -85,6 +85,7 @@ class MarketDashboard(QMainWindow):
 
         self.db = Database(db_path="data/gw2_market.db")
         self.client = GW2Client(os.getenv("API_KEY", ""))
+        self.item_page = 0
         
         self.setup_ui()
         self.load_item_list()
@@ -103,6 +104,7 @@ class MarketDashboard(QMainWindow):
         left_panel = QFrame()
         left_panel.setFrameStyle(QFrame.Shape.StyledPanel)
         left_layout = QVBoxLayout(left_panel)
+
 
         filter_layout = QHBoxLayout()
         self.type_filter = QComboBox()
@@ -125,6 +127,16 @@ class MarketDashboard(QMainWindow):
         self.item_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.item_table.itemClicked.connect(self.on_item_selected)
         left_layout.addWidget(self.item_table)
+
+        pagination_layout = QHBoxLayout()
+        self.prev_button = QPushButton("« Previous")
+        self.prev_button.clicked.connect(self.load_item_list)
+        self.next_button = QPushButton("Next »")
+        self.next_button.clicked.connect(self.load_item_list)
+        
+        pagination_layout.addWidget(self.prev_button)
+        pagination_layout.addWidget(self.next_button)
+        left_layout.addLayout(pagination_layout)
         
         right_panel = QFrame()
         right_panel.setFrameStyle(QFrame.Shape.StyledPanel)
@@ -173,22 +185,11 @@ class MarketDashboard(QMainWindow):
         item_type = self.type_filter.currentText()
         search_text = self.search_bar.text()
         
-        # Calculate metrics using a subquery on price_history to avoid traction_metrics table
-
-        # query = """
-        #     SELECT * FROM (
-        #         SELECT *, 
-        #             ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY timestamp DESC) as rn
-        #         FROM price_history
-        #     ) ph
-        #     WHERE rn = 1
-        # """
-
         query = """
             SELECT 
-                i.id, 
+                i.id,
                 i.name, 
-                i.type, 
+                i.type,
                 t.current_traction, 
                 t.demand_ratio
             FROM items i
@@ -212,7 +213,7 @@ class MarketDashboard(QMainWindow):
         if search_text:
             query += f" AND i.name LIKE '%{search_text}%'"
 
-        query += " ORDER BY t.current_traction DESC LIMIT 50"
+        query += f" ORDER BY t.current_traction DESC LIMIT {50} OFFSET {self.item_page * 50}"
 
         cursor = self.db.conn.cursor()
         cursor.execute(query)

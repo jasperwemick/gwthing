@@ -195,16 +195,6 @@ class Database:
             )
         ''')
 
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS traction_metrics (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_id INTEGER,
-                demand_delta REAL,
-                supply_delta REAL,
-                timestamp DATETIME,
-                FOREIGN KEY(item_id) REFERENCES items(id)
-            )
-        ''')
         self.conn.commit()
 
     # Insert into items database, on matching id update the item instead
@@ -364,14 +354,6 @@ class Database:
         ''', (item_type, item_type, limit, offset * limit))
         
         return [row[0] for row in cursor.fetchall()]
-    
-    def update_traction(self, item_id: int, demand_delta: float, supply_delta: float):
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            INSERT INTO traction_metrics (item_id, demand_delta, supply_delta, timestamp)
-            VALUES (?, ?, ?, ?)
-        ''', (item_id, demand_delta, supply_delta, datetime.now()))
-        self.conn.commit()
 
     def get_active_listings(self) -> List[Dict[str, Any]]:
         cursor = self.conn.cursor()

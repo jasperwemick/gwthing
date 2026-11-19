@@ -31,40 +31,59 @@ logger = logging.getLogger(__name__)
 class MplCanvas(FigureCanvas):
     def __init__(self, parent=None, width=5, height=4, dpi=100):
         fig = Figure(figsize=(width, height), dpi=dpi, facecolor='#2b2b2b')
-        fig.tight_layout(pad=0)
         super().__init__(fig)
         self.setParent(parent)
         self.axes = fig.add_subplot(111)
         self.axes.set_facecolor('#1e1e1e')
         self.axes.tick_params(colors='white')
-        self.axes.set_title('Supply & Demand Over Time', color='white')
+        self.axes.set_title('Market Data', color='white')
+        fig.tight_layout(pad=0)
+        self.current_view = "traction"
 
-
-        
-    def plot_data(self, history_data, buy_price, sell_price):
+    def plot_data(self, history_data, item_id, view_type="traction"):
         self.axes.clear()
-        if history_data:
-            # history_data is a list of (timestamp, buy_price, sell_price)
-            times = [d[0] for d in history_data]
-            buys = [d[1] for d in history_data]
-            sells = [d[2] for d in history_data]
-            
-            self.axes.plot(times, buys, label='Buy Price', color='#4caf50')
-            self.axes.plot(times, sells, label='Sell Price', color='#f44336')
-            self.axes.set_ylabel('Price', color='white')
-            self.axes.set_xlabel('Time', color='white')
-            self.axes.legend()
+        if not history_data:
+            self.axes.text(0.5, 0.5, "No data available", ha='center')
+            self.draw()
+            return
+        # Extract data based on requested view
+        # history_data is a list of tuples/dicts: (timestamp, buy_price, buy_qty, num_buyers, sell_price, sell_qty, num_sellers, buyers_delta, sellers_delta, buy_qty_delta, sell_qty_delta)
+        # Note: Order depends on DB query result. Assume correct order based on query.
         
-        self.axes.set_title(f"High Buy: {buy_price} | Low Sell: {sell_price}", color='white')
+        times = [d[11] for d in history_data] # timestamp is index 11
+        
+        if view_type == "buy_vs_sell_qty":
+            buys = [d[2] for d in history_data] # buy_quantity
+            sells = [d[5] for d in history_data] # sell_quantity
+            label_b, label_s = "Buy Qty", "Sell Qty"
+        elif view_type == "high_buy_low_sell":
+            buys = [d[1] for d in history_data] # buy_price
+            sells = [d[4] for d in history_data] # sell_price
+            label_b, label_s = "High Buy", "Low Sell"
+        elif view_type == "buyers_vs_sellers":
+            buys = [d[3] for d in history_data] # num_buyers
+            sells = [d[6] for d in history_data] # num_sellers
+            label_b, label_s = "Buyers", "Sellers"
+        else: # traction
+            buys = [d[7] for d in history_data] # buyers_delta
+            sells = [d[8] for d in history_data] # sellers_delta
+            label_b, label_s = "Buyer Delta", "Seller Delta"
+        self.axes.plot(times, buys, label=label_b, color='#4caf50')
+        self.axes.plot(times, sells, label=label_s, color='#f44336')
+        self.axes.set_ylabel('Value', color='white')
+        self.axes.set_xlabel('Time', color='white')
+        self.axes.set_title(f"View: {view_type}", color='white')
+        self.axes.legend()
         self.draw()
+
 class MarketDashboard(QMainWindow):
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("GW2 Market Tracker - Pro Dashboard")
-        self.resize(1200, 800)
-        
-        self.db = Database()
+        self.resize(1400, 900)
+
+        self.db = Database(db_path="data/gw2_market.db")
         self.client = GW2Client(os.getenv("API_KEY", ""))
         
         self.setup_ui()
@@ -84,6 +103,7 @@ class MarketDashboard(QMainWindow):
         left_panel = QFrame()
         left_panel.setFrameStyle(QFrame.Shape.StyledPanel)
         left_layout = QVBoxLayout(left_panel)
+
         filter_layout = QHBoxLayout()
         self.type_filter = QComboBox()
         self.type_filter.addItems(["All", "Armor", "Bag", "Consumable", "Container", "Gathering", "Gizmo", "Trinket", "UpgradeComponent", "Weapon"])
@@ -98,8 +118,8 @@ class MarketDashboard(QMainWindow):
         filter_layout.addWidget(self.search_bar)
         left_layout.addLayout(filter_layout)
         
-        self.item_table = QTableWidget(0, 4)
-        self.item_table.setHorizontalHeaderLabels(["ID", "Name", "Type", "Traction"])
+        self.item_table = QTableWidget(0, 5)
+        self.item_table.setHorizontalHeaderLabels(["ID", "Name", "Type", "Traction", "Demand"])
         self.item_table.setColumnHidden(0, True)
         self.item_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.item_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -109,17 +129,29 @@ class MarketDashboard(QMainWindow):
         right_panel = QFrame()
         right_panel.setFrameStyle(QFrame.Shape.StyledPanel)
         right_layout = QVBoxLayout(right_panel)
+
+        graph_container = QFrame()
+        graph_layout = QVBoxLayout(graph_container)
+        
+        btn_layout = QHBoxLayout()
+        views = ["traction", "buy_vs_sell_qty", "high_buy_low_sell", "buyers_vs_sellers"]
+        for v in views:
+            btn = QPushButton(v.replace('_', ' ').title())
+            btn.clicked.connect(lambda checked, view=v: self.update_graph_view(view))
+            btn_layout.addWidget(btn)
+        
+        graph_layout.addLayout(btn_layout)
+
         self.canvas = MplCanvas(right_panel)
         right_layout.addWidget(self.canvas, stretch=2)
         
-        self.ingredients_label = QLabel("Ingredients:")
+        self.ingredients_label = QLabel("Recipe Tree:")
         self.ingredients_label.setStyleSheet("font-weight: bold; color: white;")
         right_layout.addWidget(self.ingredients_label)
         
-        self.ingredients_box = QTextEdit()
-        self.ingredients_box.setReadOnly(True)
-        self.ingredients_box.setPlaceholderText("No recipe found.")
-        right_layout.addWidget(self.ingredients_box)
+        self.recipe_tree_container = QFrame()
+        self.recipe_tree_layout = QVBoxLayout(self.recipe_tree_container)
+        right_layout.addWidget(self.recipe_tree_container)
         
         self.tx_label = QLabel("Recent User Transactions:")
         self.tx_label.setStyleSheet("font-weight: bold; color: white;")
@@ -127,28 +159,61 @@ class MarketDashboard(QMainWindow):
         
         self.tx_list = QTextEdit()
         self.tx_list.setReadOnly(True)
-        self.tx_list.setPlaceholderText("Fetching transactions...")
         right_layout.addWidget(self.tx_list)
         
         self.splitter.addWidget(left_panel)
         self.splitter.addWidget(right_panel)
         main_layout.addWidget(self.splitter)
 
+    def update_graph_view(self, view_type):
+        if hasattr(self, '_last_history') and self._last_history:
+            self.canvas.plot_data(self._last_history, self._last_selected_id, view_type)
+
     def load_item_list(self):
-        query = """
-            SELECT i.id, i.name, i.type, 
-                   (SELECT COUNT(*) FROM traction_metrics tm WHERE tm.item_id = i.id) as traction_count
-            FROM items i
-        """
-        if self.type_filter.currentText() != "All":
-            query += f" WHERE i.type = '{self.type_filter.currentText()}'"
-        
-        query += " ORDER BY traction_count DESC"
-        
+        item_type = self.type_filter.currentText()
         search_text = self.search_bar.text()
+        
+        # Calculate metrics using a subquery on price_history to avoid traction_metrics table
+
+        # query = """
+        #     SELECT * FROM (
+        #         SELECT *, 
+        #             ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY timestamp DESC) as rn
+        #         FROM price_history
+        #     ) ph
+        #     WHERE rn = 1
+        # """
+
+        query = """
+            SELECT 
+                i.id, 
+                i.name, 
+                i.type, 
+                t.current_traction, 
+                t.demand_ratio
+            FROM items i
+            LEFT JOIN (
+                SELECT 
+                    item_id, 
+                    (buyers_delta + sellers_delta) as current_traction, 
+                    CAST(buy_quantity_delta AS FLOAT) / NULLIF(sell_quantity_delta, 0) as demand_ratio
+                FROM (
+                    SELECT *, 
+                        ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY timestamp DESC) as rn
+                    FROM price_history
+                ) sub
+                WHERE rn = 1
+            ) t ON i.id = t.item_id
+        """
+
+        if item_type != 'All': query += f" WHERE i.type = {item_type}"
+        else : query += " WHERE 1 = 1"
+        
         if search_text:
             query += f" AND i.name LIKE '%{search_text}%'"
-            
+
+        query += " ORDER BY t.current_traction DESC LIMIT 50"
+
         cursor = self.db.conn.cursor()
         cursor.execute(query)
         rows = cursor.fetchall()
@@ -160,43 +225,39 @@ class MarketDashboard(QMainWindow):
             self.item_table.setItem(idx, 0, QTableWidgetItem(str(row[0])))
             self.item_table.setItem(idx, 1, QTableWidgetItem(str(row[1])))
             self.item_table.setItem(idx, 2, QTableWidgetItem(str(row[2])))
-            self.item_table.setItem(idx, 3, QTableWidgetItem(str(row[3])))
+            self.item_table.setItem(idx, 3, QTableWidgetItem(str(row[3]) if row[3] else "0.0"))
+            self.item_table.setItem(idx, 4, QTableWidgetItem(str(row[4]) if row[4] else "0.0"))
 
     def on_item_selected(self, index):
         item_id = int(self.item_table.item(index, 0).text())
+        self._last_selected_id = item_id
         self.update_display(item_id)
 
     def update_display(self, item_id):
         cursor = self.db.conn.cursor()
-        cursor.execute("SELECT timestamp, buy_price, sell_price FROM price_history WHERE item_id = ? ORDER BY timestamp ASC", (item_id,))
-        history = cursor.fetchall()
+        # Fetch history for the graph
+        cursor.execute("SELECT * FROM price_history WHERE item_id = ? ORDER BY timestamp ASC", (item_id,))
+        self._last_history = cursor.fetchall()
         
-        buy_prices = [h[1] for h in history]
-        sell_prices = [h[2] for h in history]
-        high_buy = max(buy_prices) if buy_prices else 0
-        low_sell = min(sell_prices) if sell_prices else 0
+        # Initial graph plot
+        self.canvas.plot_data(self._last_history, item_id, "traction")
         
-        self.canvas.plot_data(history, high_buy, low_sell)
-        
+        # Recipe Tree Logic
+        for i in reversed(range(self.recipe_tree_layout.count())): 
+            widget = self.recipe_tree_layout.item(i).widget()
+            if widget: widget.deleteLater()
+            
         cursor.execute("SELECT * FROM recipes WHERE output_item_id = ?", (item_id,))
-        recipe = cursor.fetchone()
-        if recipe:
-            cursor.execute("SELECT * FROM recipe_item_ingredients WHERE recipe_id = ?", (recipe[0],))
-            items = cursor.fetchall()
-            cursor.execute("SELECT * FROM recipe_currency_ingredients WHERE recipe_id = ?", (recipe[0],))
-            currencies = cursor.fetchall()
-            
-            ingredients_str = ""
-            for i in items:
-                ingredients_str += f"- Item {i[1]} (x{i[2]})\n"
-            for c in currencies:
-                ingredients_str += f"- Currency {c[1]} (x{c[2]})\n"
-            self.ingredients_box.setPlainText(ingredients_str)
-        else:
-            self.ingredients_box.setPlainText("No recipe available for this item.")
-            
+        recipes = cursor.fetchall()
+        
+        for r in recipes:
+            # logic to build tree...
+            pass
+        # Transactions
         raw_tx = self.client.get_transactions(second_level="current", third_level="sells")
         if raw_tx:
+            # Sort by Most Profitable Flip
+            raw_tx.sort(key=lambda x: x.get('profit', 0), reverse=True)
             tx_text = ""
             for tx in raw_tx[:10]:
                 tx_text += f"ID: {tx['id']} | Item: {tx['item_id']} | Price: {tx['price']} | Qty: {tx['quantity']}\n"
